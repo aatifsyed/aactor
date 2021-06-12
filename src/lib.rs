@@ -1,3 +1,5 @@
+#![allow(unused_imports, dead_code)]
+use async_io::Async;
 use async_std::io;
 use async_std::net::{ToSocketAddrs, UdpSocket};
 use futures::stream::{Stream, StreamExt};
@@ -8,6 +10,7 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use thiserror::Error;
+pub mod stream;
 
 struct UdpSocketStream<'s> {
     socket: UdpSocket,
@@ -16,16 +19,6 @@ struct UdpSocketStream<'s> {
 }
 impl<'s> UdpSocketStream<'s> {
     const BUFSIZE: usize = 65507;
-}
-
-impl<'s> Stream for UdpSocketStream<'s> {
-    type Item = &'s [u8];
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let pin = self.get_mut();
-        match pin.socket.borrow_mut().poll() {}
-        todo!()
-    }
 }
 #[cfg(test)]
 mod tests {
