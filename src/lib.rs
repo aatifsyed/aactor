@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use thiserror::Error;
+mod intellibuf;
 pub mod stream;
 
 struct UdpSocketStream<'s> {
