@@ -1,14 +1,14 @@
-use crate::UdpSocket;
+use std::collections::VecDeque;
+
+use crate::{AddressedUdp, UdpSocket};
 use async_io::Async;
 use async_std::{io, net::ToSocketAddrs};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CreateSocketError {
-    #[error("Must provide an address")]
-    NoAddress,
-    #[error("Must provide a buffer size")]
-    NoBufferSize,
+    #[error("No value for field {0}")]
+    MissingField(&'static str),
     #[error("Couldn't convert to socket addresses")]
     BadAddress(std::io::Error),
     #[error("Couldn't bind to socket")]
@@ -18,6 +18,7 @@ pub enum CreateSocketError {
 pub struct UdpSocketBuilder<A: ToSocketAddrs> {
     pub(crate) address: Option<A>,
     pub(crate) buffer: Option<Vec<u8>>,
+    pub(crate) outbound: Option<VecDeque<AddressedUdp>>,
 }
 
 impl Default for UdpSocketBuilder<&str> {
@@ -25,6 +26,7 @@ impl Default for UdpSocketBuilder<&str> {
         Self {
             address: Some("localhost:0"),
             buffer: Some(vec![0; 65536]),
+            outbound: Some(VecDeque::new()),
         }
     }
 }
@@ -38,11 +40,17 @@ impl<A: ToSocketAddrs> UdpSocketBuilder<A> {
         self.buffer = Some(vec![0; size]);
         self
     }
+    pub fn outbound<I: IntoIterator<Item = AddressedUdp>>(mut self, outbound: I) -> Self {
+        self.outbound = Some(outbound.into_iter().collect());
+        self
+    }
     pub async fn build(self) -> Result<UdpSocket, CreateSocketError> {
         if self.address.is_none() {
-            return Err(CreateSocketError::NoAddress);
+            return Err(CreateSocketError::MissingField("address"));
         } else if self.buffer.is_none() {
-            return Err(CreateSocketError::NoBufferSize);
+            return Err(CreateSocketError::MissingField("buffer"));
+        } else if self.outbound.is_none() {
+            return Err(CreateSocketError::MissingField("outbound"));
         } else {
             // lifted from async_std
             let mut last_err = None;
@@ -59,6 +67,7 @@ impl<A: ToSocketAddrs> UdpSocketBuilder<A> {
                         return Ok(UdpSocket {
                             watcher: socket,
                             buffer: self.buffer.unwrap(),
+                            outbound: self.outbound.unwrap(),
                         });
                     }
                     Err(err) => last_err = Some(err),
