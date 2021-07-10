@@ -5,8 +5,10 @@ use std::task::{Context, Poll};
 
 use crate::AddressedUdp;
 use async_io::Async;
+use async_std::net::ToSocketAddrs;
 use derive_more::AsRef;
 use futures::{Sink, Stream};
+use thiserror::Error;
 use tracing::{self, debug, instrument};
 
 /// A bound UDP socket, which acts as both a [`Sink`] and a [`Stream`] for [`AddressedUdp`]
@@ -92,10 +94,61 @@ impl Sink<AddressedUdp> for UdpSocket {
     }
 }
 
+impl UdpSocket {
+    /// Bind a socket at `address`, which can receive packets up to `buffer_size` in length
+    pub async fn new<A: ToSocketAddrs>(
+        address: A,
+        buffer_size: usize,
+    ) -> Result<Self, CreateSocketError> {
+        // lifted from async_std
+        let mut last_err = None;
+
+        for addr in address
+            .to_socket_addrs()
+            .await
+            .map_err(|e| CreateSocketError::BadAddress(e))?
+        {
+            match Async::<std::net::UdpSocket>::bind(addr) {
+                Ok(socket) => {
+                    return Ok(UdpSocket {
+                        watcher: socket,
+                        buffer: vec![0; buffer_size],
+                        outbound: Default::default(),
+                    });
+                }
+                Err(err) => last_err = Some(err),
+            }
+        }
+
+        Err(last_err
+            .unwrap_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "could not resolve to any addresses",
+                )
+            })
+            .into())
+    }
+    /// Creates a socket on a free port at `127.0.0.1`, with a buffer size of 65536
+    pub async fn default() -> Result<Self, CreateSocketError> {
+        Self::new("127.0.0.1:0", 65536).await
+    }
+}
+
+/// Errors that could arise when creating the socket
+#[derive(Debug, Error)]
+pub enum CreateSocketError {
+    /// Couldn't convert the given socket address to a real one through the OS
+    #[error("Couldn't convert socket address")]
+    BadAddress(std::io::Error),
+    /// Couldn't bind to the given socket
+    #[error("Couldn't bind to socket")]
+    CouldntBind(#[from] io::Error),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::UdpSocketBuilder;
     use async_std::test;
     use futures::{join, stream, StreamExt};
     use itertools::all;
@@ -105,7 +158,7 @@ mod tests {
     #[test]
     async fn stream() {
         let test_data = vec!["hello", "goodbye"];
-        let receiver = UdpSocketBuilder::default().build().await.unwrap();
+        let receiver = UdpSocket::new("127.0.0.1:0", 65536).await.unwrap();
         let receiver_address = receiver.as_ref().local_addr().unwrap();
 
         let sender = &async_std::net::UdpSocket::bind("localhost:0")
@@ -138,11 +191,7 @@ mod tests {
     #[test]
     async fn sink() {
         let test_data = ["hello", "goodbye"];
-        let sender = UdpSocketBuilder::default()
-            .buffer_size(20)
-            .build()
-            .await
-            .unwrap();
+        let sender = UdpSocket::new("127.0.0.1:0", 65536).await.unwrap();
         let sender_address = sender.watcher.as_ref().local_addr().unwrap();
 
         let receiver = async_std::net::UdpSocket::bind("localhost:0")
