@@ -85,3 +85,13 @@ impl<A: ToSocketAddrs> UdpSocketBuilder<A> {
         }
     }
 }
+
+impl UdpSocket {
+    pub fn builder<A: ToSocketAddrs>() -> UdpSocketBuilder<A> {
+        UdpSocketBuilder {
+            address: None,
+            buffer: None,
+            outbound: None,
+        }
+    }
+}

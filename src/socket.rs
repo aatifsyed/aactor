@@ -3,12 +3,11 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::{AddressedUdp, UdpSocketBuilder};
+use crate::AddressedUdp;
 use async_io::Async;
-use async_std::net::ToSocketAddrs;
 use derive_more::AsRef;
 use futures::{Sink, Stream};
-use tracing::{self, debug, info, instrument, trace, warn};
+use tracing::{self, debug, instrument};
 
 /// Bound socket with buffer
 #[derive(AsRef, Debug)]
@@ -17,16 +16,6 @@ pub struct UdpSocket {
     pub(crate) watcher: Async<std::net::UdpSocket>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) outbound: VecDeque<AddressedUdp>,
-}
-
-impl UdpSocket {
-    pub fn builder<A: ToSocketAddrs>() -> UdpSocketBuilder<A> {
-        UdpSocketBuilder {
-            address: None,
-            buffer: None,
-            outbound: None,
-        }
-    }
 }
 
 impl Stream for UdpSocket {
@@ -64,24 +53,37 @@ impl Sink<AddressedUdp> for UdpSocket {
 
     #[instrument]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        while let Some(item) = self.outbound.pop_front() {
-            debug!("Popped {}", item);
+        loop {
             match self.watcher.poll_writable(cx) {
                 Poll::Ready(Ok(_)) => {
-                    debug!("ready for sending");
-                    let sync = self.watcher.as_ref();
-                    if let Err(e) = sync.send_to(&item.udp, item.address) {
-                        warn!("err on send: {:?}", e);
-                        return Poll::Ready(Err(e));
-                    };
+                    debug!("Ready for sending");
+                    if let Some(packet) = self.outbound.pop_front() {
+                        debug!("More packets to send");
+                        match self.watcher.as_ref().send_to(&packet.udp, packet.address) {
+                            Ok(_) => {
+                                debug!("Sent a packet successfully");
+                                continue; // Could be more on the queue
+                            }
+                            Err(e) => {
+                                debug!("Failed to send a packet");
+                                return Poll::Ready(Err(e));
+                            }
+                        }
+                    } else {
+                        debug!("Outbound queue is empty");
+                        return Poll::Ready(Ok(()));
+                    }
                 }
-                err_or_pending => {
-                    debug!("Err or pending: {:?}", err_or_pending);
-                    return err_or_pending;
+                Poll::Ready(Err(e)) => {
+                    debug!("Error");
+                    return Poll::Ready(Err(e));
+                }
+                Poll::Pending => {
+                    debug!("Pending");
+                    return Poll::Pending;
                 }
             }
         }
-        Poll::Ready(Ok(()))
     }
 
     #[instrument]
@@ -93,10 +95,12 @@ impl Sink<AddressedUdp> for UdpSocket {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::UdpSocketBuilder;
     use async_std::test;
     use futures::{join, stream, StreamExt};
     use itertools::all;
-    use tracing_subscriber;
+    use tracing::info;
+    use tracing_subscriber::{self, EnvFilter};
 
     #[test]
     async fn build_socket() {
@@ -140,7 +144,10 @@ mod tests {
     #[test]
     async fn sink() {
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
+            .with_env_filter(
+                EnvFilter::from_default_env()
+                    .add_directive("async_udp_stream::socket=trace".parse().unwrap()),
+            )
             .pretty()
             .init();
 
