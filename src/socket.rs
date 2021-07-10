@@ -9,7 +9,7 @@ use derive_more::AsRef;
 use futures::{Sink, Stream};
 use tracing::{self, debug, instrument};
 
-/// Bound socket with buffer
+/// A bound UDP socket, which acts as both a [`Sink`] and a [`Stream`] for [`AddressedUdp`]
 #[derive(AsRef, Debug)]
 pub struct UdpSocket {
     #[as_ref(forward)] // Bugged?
@@ -101,13 +101,7 @@ mod tests {
     use itertools::all;
     use tracing::info;
 
-    #[test]
-    async fn build_socket() {
-        let sock = UdpSocketBuilder::default().build().await.unwrap();
-        println!("{:?}", sock);
-        println!("{:?}", sock.as_ref().local_addr());
-    }
-
+    /// Send UDP from a standard socket, and ensure that our receiving socket can [`Stream`] those received packets
     #[test]
     async fn stream() {
         let test_data = vec!["hello", "goodbye"];
@@ -140,6 +134,7 @@ mod tests {
         assert!(all(stream, |(expected, actual)| expected == actual));
     }
 
+    /// [`Sink`] some test data to our socket, and check that a standard UDP socket can receive it
     #[test]
     async fn sink() {
         let test_data = ["hello", "goodbye"];
