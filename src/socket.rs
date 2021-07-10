@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::{Debug, Formatter};
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -12,12 +13,22 @@ use thiserror::Error;
 use tracing::{self, debug, instrument};
 
 /// A bound UDP socket, which acts as both a [`Sink`] and a [`Stream`] for [`AddressedUdp`]
-#[derive(AsRef, Debug)]
+#[derive(AsRef)]
 pub struct UdpSocket {
     #[as_ref(forward)] // Bugged?
     pub(crate) watcher: Async<std::net::UdpSocket>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) outbound: VecDeque<AddressedUdp>,
+}
+
+impl Debug for UdpSocket {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("UdpSocket")
+            .field("socket", self.watcher.as_ref())
+            .field("buffer_length", &self.buffer.len())
+            .field("outbound", &self.outbound)
+            .finish()
+    }
 }
 
 impl Stream for UdpSocket {
