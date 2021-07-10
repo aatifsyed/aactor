@@ -100,7 +100,6 @@ mod tests {
     use futures::{join, stream, StreamExt};
     use itertools::all;
     use tracing::info;
-    use tracing_subscriber::{self, EnvFilter};
 
     #[test]
     async fn build_socket() {
@@ -143,20 +142,13 @@ mod tests {
 
     #[test]
     async fn sink() {
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::from_default_env()
-                    .add_directive("async_udp_stream::socket=trace".parse().unwrap()),
-            )
-            .pretty()
-            .init();
-
-        let test_data = vec!["hello", "goodbye"];
+        let test_data = ["hello", "goodbye"];
         let sender = UdpSocketBuilder::default()
             .buffer_size(20)
             .build()
             .await
             .unwrap();
+        let sender_address = sender.watcher.as_ref().local_addr().unwrap();
 
         let receiver = async_std::net::UdpSocket::bind("localhost:0")
             .await
@@ -174,14 +166,17 @@ mod tests {
             .forward(sender);
 
         let receiver_task = async {
-            loop {
+            for expected in test_data {
                 let mut buf = Vec::from([0; 1024]);
                 let (len, address) = receiver.recv_from(&mut buf).await.unwrap();
                 buf.truncate(len);
-                info!("Received: {}", AddressedUdp { udp: buf, address })
+                let addressed_udp = AddressedUdp { udp: buf, address };
+                info!("Received: {}", addressed_udp);
+                assert_eq!(addressed_udp.address, sender_address);
+                assert_eq!(addressed_udp.udp, expected.as_bytes().to_owned());
             }
         };
 
-        join!(sender_task, receiver_task);
+        let (_, _) = join!(sender_task, receiver_task);
     }
 }
